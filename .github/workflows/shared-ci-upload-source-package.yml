@@ -1,0 +1,125 @@
+# .github/workflows/shared-ci-upload-source-package.yml
+name: Upload Source Package to OSS
+
+on:
+  workflow_call:
+    inputs:
+      base_ref:
+        required: true
+        type: string
+      head_sha:
+        required: true
+        type: string
+      profiles:
+        required: false
+        type: string
+      IAC_GOVERNANCE_REPO:
+        required: true
+        type: string
+      IAC_GOVERNANCE_REF:
+        required: true
+        type: string
+
+env:
+  OSS_ACCESS_KEY_ID: ${{ secrets.ALIBABA_CLOUD_ACCESS_KEY_ID }}
+  OSS_ACCESS_KEY_SECRET: ${{ secrets.ALIBABA_CLOUD_ACCESS_KEY_SECRET }}
+  OSS_BUCKET: ${{ vars.OSS_BUCKET }}
+  OSS_REGION: ${{ vars.OSS_REGION }}
+
+jobs:
+  upload_source_package:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          path: code
+          ref: ${{ inputs.head_sha }}
+
+      - name: Checkout scripts
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.IAC_GOVERNANCE_REPO }}
+          path: governance
+          token: ${{ secrets.GITHUB_TOKEN }}
+          ref: ${{ inputs.IAC_GOVERNANCE_REF }}
+          sparse-checkout: |
+            scripts/upload_to_oss.py
+
+      - name: Setup Python environment
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.9"
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install alibabacloud-oss-v2
+
+
+      - name: Create source package and Upload to OSS
+        run: |
+          echo "Creating source package..."
+
+          sudo wget https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -O /usr/local/bin/yq
+          sudo chmod +x /usr/local/bin/yq
+          yq --version
+
+          if [[ "$profiles" == "all" ]]; then
+              if [[ -d "deployments" ]]; then
+                  profile_list=()
+                  for dir in deployments/*/; do
+                      if [[ -d "$dir" ]]; then
+                          folder_name=$(basename "$dir")
+                          profile_list+=("$folder_name")
+                      fi
+                  done
+              else
+                  echo "Error: deployments directory not found" >&2
+                  exit 1
+              fi
+          else
+              IFS=',' read -ra profile_list <<< "$profiles"
+          fi
+          echo "Profiles to process:"
+
+          for profile in "${profile_list[@]}"; do
+            echo "Processing profile: $profile"
+            codeDir="code-$profile"
+
+            mkdir $codeDir && cp -r code/ $codeDir/
+            cd $codeDir && cp -r deployments/$profile/* stacks/ 2>/dev/null || echo "No files to copy or directory does not exist"
+            rm -rf deployments/
+            
+            credentials_file="stacks/credentials.yaml"
+            oss_bucket=$(yq '.oss_bucket' "$credentials_file")
+            oss_region=$(yq '.oss_region' "$credentials_file")
+            access_key_id=$(yq '.access_key_id' "$credentials_file")
+            access_key_secret=$(yq '.access_key_secret' "$credentials_file")
+            export OSS_BUCKET=$oss_bucket OSS_REGION=$oss_region OSS_ACCESS_KEY_ID=$access_key_id OSS_ACCESS_KEY_SECRET=$access_key_secret
+    
+            
+            zip -q -r ../$codeDir.zip . -x "*.git*" "*.terraform*" && cd ..
+
+            if [ ! -f $codeDir.zip ]; then
+              echo "Error: Failed to create $codeDir.zip"
+              exit 1
+            fi
+
+            object_path="repositories/${{ github.repository }}/${{ inputs.base_ref }}"
+            code_path="${object_path}/code.zip"
+
+            ls -all
+
+            echo "Uploading to OSS with key: $code_path"
+            python governance/scripts/upload_to_oss.py --key="$code_path" --file_path=$codeDir.zip --unique_key="${{ inputs.head_sha }}"
+
+            if [ $? -ne 0 ]; then
+              echo "Error: Failed to upload to OSS"
+              exit 1
+            fi
+
+          done
+
+          echo "All source package created and uploaded to OSS"
+          
