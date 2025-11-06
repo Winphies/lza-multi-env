@@ -38,7 +38,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       command: ${{ steps.check-content.outputs.COMMAND }}
-      all_changed_stacks: ${{ steps.check-content.outputs.all_changed_stacks }}
+      comment_changed_stacks: ${{ steps.check-content.outputs.comment_changed_stacks }}
       base_ref: ${{ steps.get_pr_info.outputs.BASE_REF }}
       base_sha: ${{ steps.get_pr_info.outputs.BASE_SHA }}
       head_sha: ${{ steps.get_pr_info.outputs.HEAD_SHA }}
@@ -76,7 +76,8 @@ jobs:
           all_changed_stacks="${profile}:${stack}"
 
           echo "COMMAND=$command" >> $GITHUB_OUTPUT
-          echo "all_changed_stacks=$all_changed_stacks" >> $GITHUB_OUTPUT
+          echo "comment_changed_stacks: $all_changed_stacks"
+          echo "comment_changed_stacks=$all_changed_stacks" >> $GITHUB_OUTPUT
          
 
       - name: Get PR info
@@ -122,7 +123,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       all_changed_files: ${{ steps.changed-files.outputs.all_changed_files }}
-      all_changed_stacks: ${{ steps.changed-files.outputs.all_changed_stacks }}
+      all_changed_stacks: ${{ steps.calculate-changed-stacks.outputs.all_changed_stacks }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -141,10 +142,11 @@ jobs:
             **/*.json
             **/*.tf
 
-      - name: Check if command flags are valid
+      - name: Calculate changed stacks
+        id: calculate-changed-stacks
         run: |
           # Check if get_pr_info provided all_changed_stacks
-          pr_all_changed_stacks="${{ needs.get_pr_info.outputs.all_changed_stacks }}"
+          pr_all_changed_stacks="${{ needs.get_pr_info.outputs.comment_changed_stacks }}"
           
           # If get_pr_info provided all_changed_stacks, use it directly
           if [ -n "$pr_all_changed_stacks" ] && [ "$pr_all_changed_stacks" != ":" ]; then
@@ -154,6 +156,7 @@ jobs:
           fi
 
           all_changed_files="${{ steps.changed-files.outputs.all_changed_files }}"
+          echo "All changed files: $all_changed_files"
           IFS=',' read -ra changed_files_array <<< "$all_changed_files"
 
           profiles=()
@@ -200,5 +203,5 @@ jobs:
               fi
           done
 
-          echo "$all_changed_stacks"
+          echo "all_changed_stacks: $all_changed_stacks"
           echo "all_changed_stacks=$all_changed_stacks" >> $GITHUB_OUTPUT

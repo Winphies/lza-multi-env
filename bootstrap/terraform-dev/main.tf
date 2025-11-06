@@ -37,7 +37,7 @@ locals {
   # MNS configuration
   # notification_endpoint = "acs:mns:cn-beijing:1511928242963727:/queues/stack-callback"
 
-  notification_endpoint = "acs:mns:cn-beijing:1252907582134651:/queues/OSS-Event-For-Stack-Pre"
+  notification_endpoint = "acs:mns:cn-beijing:1252907582134651:/queues/OSS-Event-For-Stack"
   notification_role_arn = "acs:ram::1252907582134651:role/iacservicemnsrole"
 
   # OSS bucket ARN for event rule

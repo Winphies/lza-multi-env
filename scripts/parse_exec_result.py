@@ -6,11 +6,14 @@ OSS Result Parser and Formatter
 This module provides functionality to poll, download, and format execution results from OSS.
 """
 
+from calendar import c
 import os
 import json
 import time
 import argparse
-from typing import Dict, Any, Optional, Tuple
+import yaml
+import threading
+from typing import Dict, Any, Optional, Tuple, List
 from urllib.parse import urlparse
 import alibabacloud_oss_v2 as oss
 
@@ -96,11 +99,151 @@ def parse_oss_url(oss_url: str) -> Tuple[Optional[str], Optional[str], Optional[
         return None, None, None, errors
 
 
-def create_oss_client(region: str) -> Optional[oss.Client]:
+def parse_multi_oss_urls(oss_urls: str) -> List[Tuple[str, str, str, str]]:
+    """Parse multiple OSS URLs separated by semicolon, each with optional profile name.
+    
+    Format: profile1@oss::https://bucket1.oss-region1.aliyuncs.com/path/to/object;oss::https://bucket2.oss-region2.aliyuncs.com/path/to/object
+    
+    Returns:
+        List of tuples: (profile_name, bucket_name, object_key, region)
+    """
+    results = []
+
+    # Split by semicolon to get individual URL entries
+    entries = oss_urls.split(';')
+
+    for entry in entries:
+        entry = entry.strip()
+        if not entry:
+            continue
+
+        # Check if entry has profile name prefix (profile@url)
+        if '@' in entry and not entry.startswith('oss::https://'):
+            profile_name, url = entry.split('@', 1)
+            profile_name = profile_name.strip()
+            url = url.strip()
+        else:
+            profile_name = "default"
+            url = entry
+
+        # Parse the URL
+        bucket, key, region, errors = parse_oss_url(url)
+        if not errors and bucket and key and region:
+            results.append((profile_name, bucket, key, region))
+        else:
+            print(
+                f"⚠️  Warning: Failed to parse URL for profile '{profile_name}': {errors}")
+
+    return results
+
+
+def load_credentials(profile_name: str, code_path: str = "") -> Optional[Tuple[str, str]]:
+    """Load credentials for a specific profile.
+    
+    First looks for profile credentials in deployments/{profile_name}/credentials.yaml
+    to get the access key names, then looks in the root credentials.yaml to get the actual values.
+    
+    Args:
+        profile_name: The name of the profile to load credentials for
+        code_path: Optional code path to use for credential file location
+        
+    Returns:
+        Tuple of (access_key_id, access_key_secret) or None if not found
+    """
+    try:
+        # Determine the base path for credentials
+        if code_path:
+            base_path = code_path
+        else:
+            base_path = "."
+
+        print(f"Base path: {base_path}")
+
+        # Path to profile credentials file
+        profile_credentials_path = f"{base_path}/deployments/{profile_name}/credentials.yaml"
+
+        # Check if profile credentials file exists
+        if not os.path.exists(profile_credentials_path):
+            print(
+                f"⚠️  Warning: Profile credentials file not found: {profile_credentials_path}")
+            return None
+
+        # Load profile credentials to get key names
+        with open(profile_credentials_path, 'r') as f:
+            profile_credentials = yaml.safe_load(f)
+
+        # Check if profile_credentials is a dictionary
+        if not isinstance(profile_credentials, dict):
+            print(
+                f"❌ Error: Profile credentials is not a dictionary: {profile_credentials}")
+            return None
+
+        # Get access key names from profile credentials
+        access_key_id_name = profile_credentials.get('access_key_id')
+        access_key_secret_name = profile_credentials.get('access_key_secret')
+        print(
+            f"Access key names: {access_key_id_name}, {access_key_secret_name}")
+
+        if not access_key_id_name or not access_key_secret_name:
+            print(
+                f"⚠️  Warning: Access key names not found in profile credentials for {profile_name}")
+            return None
+
+        # Load root credentials file to get actual values
+        root_credentials_path = "oss_credentials.yaml"
+        if not os.path.exists(root_credentials_path):
+            print(
+                f"⚠️  Warning: Root credentials file not found: {root_credentials_path}")
+            return None
+
+        # Load root credentials file using YAML parser
+        with open(root_credentials_path, 'r') as f:
+            root_credentials = yaml.safe_load(f)
+
+        # Check if root_credentials is a dictionary
+        if not isinstance(root_credentials, dict):
+            print(
+                f"❌ Error: Root credentials is not a dictionary: {root_credentials}")
+            return None
+
+        # Get actual access key values
+        access_key_id = root_credentials.get(access_key_id_name)
+        access_key_secret = root_credentials.get(access_key_secret_name)
+
+        if not access_key_id or not access_key_secret:
+            print(
+                f"⚠️  Warning: Access key values not found for {profile_name}")
+            return None
+
+        print(
+            f"Loaded credentials for profile {profile_name}: {access_key_id[:5]}***")
+        return access_key_id, access_key_secret
+
+    except Exception as e:
+        print(
+            f"❌ Error loading credentials for profile {profile_name}: {str(e)}")
+        return None
+
+
+def create_oss_client(region: str, profile_name: str = "default", code_path: str = "") -> Optional[oss.Client]:
     """Create OSS client with proper credentials and configuration."""
     try:
+        # Load credentials for the profile
+        credentials = load_credentials(profile_name, code_path)
 
-        credentials_provider = oss.credentials.EnvironmentVariableCredentialsProvider()
+        if credentials:
+            access_key_id, access_key_secret = credentials
+
+            # Create credentials provider with specific credentialss
+            credentials_provider = oss.credentials.StaticCredentialsProvider(
+                access_key_id=access_key_id,
+                access_key_secret=access_key_secret
+            )
+        else:
+            # Fallback to environment variable credentials provider
+            print(
+                f"⚠️  Warning: Using environment variable credentials for profile {profile_name}")
+            credentials_provider = oss.credentials.EnvironmentVariableCredentialsProvider()
 
         cfg = oss.config.load_default()
         cfg.credentials_provider = credentials_provider
@@ -240,42 +383,21 @@ def format_execution_result(data: Dict[str, Any]) -> str:
         return f"## ❌ Error\n\nError formatting result: `{str(e)}`"
 
 
-def poll_and_process_oss_result(oss_url: str, max_wait_time: int = 3600, output_file: Optional[str] = None) -> Optional[str]:
-    """Poll OSS URL for result file, download and format when available."""
+def poll_oss_result(code_path: str, profile_name: str, bucket: str, key: str, region: str, max_wait_time: int, results: List, lock: threading.Lock) -> None:
+    """Poll OSS URL for result file in a separate thread."""
     poll_interval = 10  # Fixed polling interval: 10 seconds
 
-    print(f"\n🔍 Starting to poll OSS URL: {oss_url}")
-    print(
-        f"⏱️  Poll interval: {poll_interval}s, Max wait time: {max_wait_time}s")
-    if output_file:
-        print(f"📄 Output will be written to: {output_file}")
-    print("")
+    print(f"🔄 Processing profile: {profile_name}")
 
-    # Parse OSS URL
-    bucket, key, region, parse_errors = parse_oss_url(oss_url)
-    if parse_errors:
-        print("❌ URL parsing errors:")
-        for error in parse_errors:
-            print(f"   - {error}")
-        return None
-
-    if not bucket or not key or not region:
-        print("❌ Missing required URL components after parsing")
-        return None
-
-    print(f"📋 Parsed URL: Bucket={bucket}, Key={key}, Region={region}")
-    print("")
-
-    # Create OSS client
-    client = create_oss_client(region)
+    # Create OSS client with profile-specific credentials
+    client = create_oss_client(region, profile_name, code_path)
     if not client:
-        print("❌ Failed to create OSS client")
-        return None
+        print(f"❌ Failed to create OSS client for profile {profile_name}")
+        return
 
-    print("✅ OSS client created successfully")
-    print("")
+    print(f"✅ OSS client created successfully for profile {profile_name}")
 
-    # Start polling
+    # Start polling for this profile
     start_time = time.time()
     attempt = 0
 
@@ -283,47 +405,114 @@ def poll_and_process_oss_result(oss_url: str, max_wait_time: int = 3600, output_
         attempt += 1
         elapsed_time = time.time() - start_time
 
-        print(f"🔄 Attempt #{attempt} (Elapsed: {elapsed_time:.1f}s)")
+        print(
+            f"🔄 Attempt #{attempt} for {profile_name} (Elapsed: {elapsed_time:.1f}s)")
 
         # Check if max wait time exceeded
         if elapsed_time > max_wait_time:
-            print(f"⏰ Maximum wait time ({max_wait_time}s) exceeded")
-            return None
+            print(
+                f"⏰ Maximum wait time ({max_wait_time}s) exceeded for profile {profile_name}")
+            break
 
         # Check if object exists and get content
         content = get_oss_object_content(client, bucket, key)
         if content:
-            print(f"✅ Object found! Downloaded {len(content)} characters")
+            print(
+                f"✅ Object found for {profile_name}! Downloaded {len(content)} characters")
 
             # Parse JSON
             try:
                 data = json.loads(content)
-                print("✅ JSON content validated successfully")
-                print("")
+                print(
+                    f"✅ JSON content validated successfully for {profile_name}")
 
-                # Format the result
-                formatted_result = format_execution_result(data)
+                # Add profile information to the data
+                data['profile'] = profile_name
 
-                # Write to file if output_file is specified
-                if output_file:
-                    try:
-                        with open(output_file, 'w', encoding='utf-8') as f:
-                            f.write(formatted_result)
-                        print(f"📄 Result written to file: {output_file}")
-                    except Exception as e:
-                        print(
-                            f"⚠️  Warning: Failed to write to file {output_file}: {str(e)}")
-
-                return formatted_result
+                # Add result to shared results list
+                with lock:
+                    results.append(data)
+                break
             except json.JSONDecodeError as e:
-                print(f"❌ Invalid JSON format: {str(e)}")
-                return None
+                print(f"❌ Invalid JSON format for {profile_name}: {str(e)}")
+                break
             except Exception as e:
-                print(f"❌ Failed to parse content: {str(e)}")
-                return None
+                print(
+                    f"❌ Failed to parse content for {profile_name}: {str(e)}")
+                break
         else:
-            print(f"⏳ Object not found, waiting {poll_interval}s...")
+            print(
+                f"⏳ Object not found for {profile_name}, waiting {poll_interval}s...")
             time.sleep(poll_interval)
+
+
+def poll_and_process_oss_result(oss_url: str, max_wait_time: int = 600, output_file: Optional[str] = None, code_path: str = "") -> Optional[str]:
+    """Poll OSS URL for result file, download and format when available."""
+    poll_interval = 10  # Fixed polling interval: 10 seconds
+
+    print(f"\n🔍 Starting to poll OSS URL(s): {oss_url}")
+    print(
+        f"⏱️  Poll interval: {poll_interval}s, Max wait time: {max_wait_time}s")
+    if output_file:
+        print(f"📄 Output will be written to: {output_file}")
+    print("")
+
+    # Parse multiple OSS URLs
+    oss_entries = parse_multi_oss_urls(oss_url)
+    if not oss_entries:
+        print("❌ No valid OSS URLs found")
+        return None
+
+    print(f"📋 Found {len(oss_entries)} OSS entry(s) to process:")
+    for profile_name, bucket, key, region in oss_entries:
+        print(
+            f"   - Profile: {profile_name}, Bucket: {bucket}, Key: {key}, Region: {region}")
+    print("")
+
+    # Process each OSS entry in parallel using threads
+    threads = []
+    all_results = []
+    lock = threading.Lock()
+
+    # Create and start threads for each profile
+    for profile_name, bucket, key, region in oss_entries:
+        thread = threading.Thread(
+            target=poll_oss_result,
+            args=(code_path, profile_name, bucket, key, region,
+                  max_wait_time, all_results, lock)
+        )
+        threads.append(thread)
+        thread.start()
+
+    # Wait for all threads to complete
+    for thread in threads:
+        thread.join()
+
+    if not all_results:
+        print("❌ Failed to retrieve results from any OSS location")
+        return None
+
+    # Format all results
+    formatted_outputs = []
+    for data in all_results:
+        profile_name = data.get('profile', 'Unknown')
+        formatted_result = format_execution_result(data)
+        formatted_outputs.append(
+            f"## Profile: {profile_name}\n\n{formatted_result}")
+
+    final_output = "\n\n---\n\n".join(formatted_outputs)
+
+    # Write to file if output_file is specified
+    if output_file:
+        try:
+            with open(output_file, 'w', encoding='utf-8') as f:
+                f.write(final_output)
+            print(f"📄 Result written to file: {output_file}")
+        except Exception as e:
+            print(
+                f"⚠️  Warning: Failed to write to file {output_file}: {str(e)}")
+
+    return final_output
 
 
 def main():
@@ -333,18 +522,23 @@ def main():
     )
     parser.add_argument(
         '--oss-url',
-        help='OSS URL to poll in format: oss://bucket-name.oss-region.aliyuncs.com/path/to/file'
+        help='OSS URL(s) to poll in format: [profile1@]oss::https://bucket1.oss-region1.aliyuncs.com/path/to/file;[profile2@]oss::https://bucket2.oss-region2.aliyuncs.com/path/to/file'
     )
     parser.add_argument(
         '--max-wait-time',
         type=int,
-        default=3600,
+        default=600,
         help='Maximum wait time in seconds (default: 3600)'
     )
     parser.add_argument(
         '--output-file',
         type=str,
         help='Output file path to write the formatted result (optional)'
+    )
+    parser.add_argument(
+        '--code-path',
+        type=str,
+        help='Code path for credential file location (optional)'
     )
 
     args = parser.parse_args()
@@ -353,7 +547,8 @@ def main():
         result = poll_and_process_oss_result(
             oss_url=args.oss_url,
             max_wait_time=args.max_wait_time,
-            output_file=args.output_file
+            output_file=args.output_file,
+            code_path=args.code_path
         )
 
         if result:

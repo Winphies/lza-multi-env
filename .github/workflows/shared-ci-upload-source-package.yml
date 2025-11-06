@@ -20,7 +20,6 @@ on:
         required: true
         type: string
 
-
 jobs:
   upload_source_package:
     runs-on: ubuntu-latest
@@ -55,14 +54,16 @@ jobs:
         run: |
           echo "Creating source package..."
 
-          sudo wget https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -O /usr/local/bin/yq
-          sudo chmod +x /usr/local/bin/yq
+          wget -q https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -O /usr/local/bin/yq 
+          chmod +x /usr/local/bin/yq
           yq --version
 
+          profiles=${{ inputs.profiles }}
+          echo "Profiles: ${profiles}"
           if [[ "$profiles" == "all" ]]; then
-              if [[ -d "deployments" ]]; then
+              if [[ -d "code/deployments" ]]; then
                   profile_list=()
-                  for dir in deployments/*/; do
+                  for dir in code/deployments/*/; do
                       if [[ -d "$dir" ]]; then
                           folder_name=$(basename "$dir")
                           profile_list+=("$folder_name")
@@ -75,38 +76,62 @@ jobs:
           else
               IFS=',' read -ra profile_list <<< "$profiles"
           fi
-          echo "Profiles to process:"
+          echo "Profiles to process: ${profile_list[*]}"
 
+          extract_crc32() {
+              local zip_file=$1
+              zipinfo -v "$zip_file" | grep -E '^.*32-bit CRC value.*$' | awk '{print $NF}'
+          }
+          extract_filenames() {
+              local zip_file=$1
+              zipinfo -v "$zip_file" | grep -E '^.*Central directory entry.*$' | awk '{print $NF}'
+          }
+          calculate_zip_hash() {
+              local zip_file=$1
+              local crc_values=$(extract_crc32 "$zip_file")
+              local filenames=$(extract_filenames "$zip_file")
+              local combined_data=$(paste <(echo "$filenames") <(echo "$crc_values"))
+              echo "$combined_data" | md5sum | awk '{print $1}'
+          }
+
+          echo -n "${{ secrets.OSS_CREDENTIALS }}" > oss_credentials.yaml
           for profile in "${profile_list[@]}"; do
             echo "Processing profile: $profile"
             codeDir="code-$profile"
 
-            mkdir $codeDir && cp -r code/ $codeDir/
-            cd $codeDir && cp -r deployments/$profile/* stacks/ 2>/dev/null || echo "No files to copy or directory does not exist"
+            mkdir $codeDir && cp -rp code/* $codeDir/
+            cd $codeDir && cp -rp deployments/$profile/* stacks/ 2>/dev/null || echo "No files to copy or directory does not exist"
             rm -rf deployments/
             
             credentials_file="stacks/credentials.yaml"
+
             oss_bucket=$(yq '.oss_bucket' "$credentials_file")
             oss_region=$(yq '.oss_region' "$credentials_file")
-            access_key_id=$(yq '.access_key_id' "$credentials_file")
-            access_key_secret=$(yq '.access_key_secret' "$credentials_file")
-            export OSS_BUCKET=$oss_bucket OSS_REGION=$oss_region OSS_ACCESS_KEY_ID=$access_key_id OSS_ACCESS_KEY_SECRET=$access_key_secret
-    
+            access_key_id_name=$(yq '.access_key_id' "$credentials_file")
+            access_key_secret_name=$(yq '.access_key_secret' "$credentials_file")
+
+            access_key_id=$(yq ".${access_key_id_name}" "../oss_credentials.yaml")
+            access_key_secret=$(yq ".${access_key_secret_name}" "../oss_credentials.yaml")
             
-            zip -q -r ../$codeDir.zip . -x "*.git*" "*.terraform*" && cd ..
+            export OSS_BUCKET=$oss_bucket OSS_REGION=$oss_region OSS_ACCESS_KEY_ID=$access_key_id OSS_ACCESS_KEY_SECRET=$access_key_secret
+        
+            zip -q -r -X ../$codeDir.zip . -x "*.git*" "*.terraform*" "bootstrap/*" "scripts/*" && cd ..
 
             if [ ! -f $codeDir.zip ]; then
               echo "Error: Failed to create $codeDir.zip"
               exit 1
             fi
 
+            hash=$(calculate_zip_hash "$codeDir.zip")
+            echo "Hash: $hash"
+
             object_path="repositories/${{ github.repository }}/${{ inputs.base_ref }}"
             code_path="${object_path}/code.zip"
 
-            ls -all
+            ls -all *.zip
 
             echo "Uploading to OSS with key: $code_path"
-            python governance/scripts/upload_to_oss.py --key="$code_path" --file_path=$codeDir.zip --unique_key="${{ inputs.head_sha }}"
+            python governance/scripts/upload_to_oss.py --key="$code_path" --file_path=$codeDir.zip --unique_key="$hash"
 
             if [ $? -ne 0 ]; then
               echo "Error: Failed to upload to OSS"

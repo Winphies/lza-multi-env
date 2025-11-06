@@ -2,17 +2,8 @@
 name: Scheduled Check
 
 on:
-  # 手动触发
   workflow_dispatch:
-    inputs:
-      reason:
-        description: 'Reason for running this workflow'
-        required: false
-        default: 'Manual trigger for state check'
   
-  # 定时触发（每天凌晨2点）
-  # schedule:
-  #   - cron: '0 2 * * *'
 
 jobs:
   process_code:
@@ -21,18 +12,6 @@ jobs:
     with:
       base_ref: main
       head_sha: ${{ github.sha }}
+      profiles: all
       IAC_GOVERNANCE_REPO: shanye997/lza-multi-env
       IAC_GOVERNANCE_REF: main
-  
-  # 新增的 job，仅在定时任务触发时执行
-  scheduled_task_notification:
-    # 仅在 schedule 事件触发时运行
-    # if: github.event_name == 'schedule'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Send notification for scheduled task
-        run: |
-          echo ${{ github.event_name }}
-          echo "Scheduled state check completed successfully at $(date)"
-          # 这里可以添加发送通知的逻辑，例如发送邮件或 Slack 消息
-          echo "This job only runs when triggered by the schedule cron job"

@@ -31,3 +31,6 @@ Thumbs.db
 # Sensitive files
 terraform.tfvars
 secrets.tf
+
+git.sh
+oss_credentials.yaml

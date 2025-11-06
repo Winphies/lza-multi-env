@@ -72,6 +72,7 @@ def validate_configuration(region, bucket):
             return False
 
         logger.info("Configuration validation passed")
+        logger.info(f"access_key: {access_key}")
         return True
 
     except Exception as e:

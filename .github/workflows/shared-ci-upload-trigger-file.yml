@@ -13,7 +13,7 @@ on:
       command:
         required: true
         type: string
-      changed_files:
+      all_changed_stacks:
         required: true
         type: string
       trigger_file_name:
@@ -31,17 +31,11 @@ on:
         description: "The log path of the execution result"
         value: ${{ jobs.create_comment_trigger.outputs.result_path }}
 
-env:
-  OSS_ACCESS_KEY_ID: ${{ secrets.ALIBABA_CLOUD_ACCESS_KEY_ID }}
-  OSS_ACCESS_KEY_SECRET: ${{ secrets.ALIBABA_CLOUD_ACCESS_KEY_SECRET }}
-  OSS_BUCKET: ${{ vars.OSS_BUCKET }}
-  OSS_REGION: ${{ vars.OSS_REGION }}
-
 jobs:
   create_comment_trigger:
     runs-on: ubuntu-latest
     outputs:
-      result_path: ${{ steps.create_trigger_event_file.outputs.RESULT_PATH }}
+      result_path: ${{ steps.upload_trigger_event_file.outputs.RESULT_PATH }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -69,74 +63,139 @@ jobs:
           python -m pip install --upgrade pip
           pip install alibabacloud-oss-v2
 
-      - name: Check source package version
-        id: check_source_package_version
+      - name: Upload source package and trigger event file
+        id: upload_trigger_event_file
         run: |
-
           echo "Creating source package..."
-          cd code && zip -q -r ../code.zip . -x "*.git*" "*.terraform*" && cd ..
-          if [ ! -f code.zip ]; then
-            echo "Error: Failed to create code.zip"
-            exit 1
-          fi
-          echo "Created code.zip with size:"
-          ls -lh code.zip
 
-          object_path="repositories/${{ github.repository }}/${{ inputs.base_ref }}"
-          echo "OBJECT_PATH=$object_path" >> $GITHUB_OUTPUT
-          code_path="${object_path}/code.zip"
+          wget -q https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -O /usr/local/bin/yq 
+          chmod +x /usr/local/bin/yq
+          yq --version
 
-          echo "Uploading to OSS with key: $code_path"
-          output=$(python governance/scripts/upload_to_oss.py --key="$code_path" --file_path=code.zip --unique_key="${{ inputs.head_sha }}" 2>&1)
+          input_profiles="${{ inputs.all_changed_stacks }}"
+          echo "Profiles: ${input_profiles}"
+          profile_list=()
+          stacks_list=()
+          IFS=';' read -ra profile_stacks <<< "$input_profiles"
+          for item in "${profile_stacks[@]}"; do
+              IFS=':' read -r profile stacks <<< "$item"
+              profile_list+=("$profile")
+              stacks_list+=("$stacks")
+          done
+          echo "Profiles to process: ${profile_list[*]}"
+          echo "Stacks to process: ${stacks_list[*]}"
 
-          if [ $? -ne 0 ]; then
-            echo "Error: Failed to upload to OSS"
-            echo "$output"
-            exit 1
-          fi
-
-          echo "INFO: Upload successfully"
-          echo "$output"
-          version_id=$(echo "$output" | grep -o 'Version ID: [^,]*' | sed 's/.*Version ID: //')
-
-          if [ -z "$version_id" ]; then
-            echo "Warning: Could not extract version_id from output"
-            version_id=""
-          fi
-
-          echo "VERSION_ID=$version_id" >> $GITHUB_OUTPUT
-
-      - name: Create and upload trigger event file
-        id: create_trigger_event_file
-        run: |
-
-          oss_path="oss::https://${{ vars.OSS_BUCKET }}.oss-${{ vars.OSS_REGION }}.aliyuncs.com"
-
-          trigger_file_name="${{ inputs.trigger_file_name }}"
-          trigger_path="${{ steps.check_source_package_version.outputs.OBJECT_PATH }}/${trigger_file_name}"
-
-          code_path="${oss_path}/${{ steps.check_source_package_version.outputs.OBJECT_PATH }}/code.zip"
-          result_path="${oss_path}/notifications/${{ github.repository }}/${{ inputs.base_ref }}/${trigger_file_name}"
-          echo "RESULT_PATH=$result_path" >> $GITHUB_OUTPUT
-
-          # Remove .json suffix from trigger_file_name for id field
-          trigger_id="${{ inputs.trigger_file_name }}"
-          trigger_id="${trigger_id%.json}"
-
-          echo "Creating trigger event file for command: ${{ inputs.command }}"
-          cat > trigger-event.json << EOF
-          {
-            "id": "$trigger_id",
-            "action": "${{ inputs.command }}",
-            "codeHeadSha": "${{ inputs.head_sha }}",
-            "codeVersionId": "${{ steps.check_source_package_version.outputs.VERSION_ID }}",
-            "codePackagePath": "$code_path",
-            "execResultPath": "$result_path",
-            "changedFolders": "${{ inputs.changed_files }}"
+          extract_crc32() {
+              local zip_file=$1
+              zipinfo -v "$zip_file" | grep -E '^.*32-bit CRC value.*$' | awk '{print $NF}'
           }
+          extract_filenames() {
+              local zip_file=$1
+              zipinfo -v "$zip_file" | grep -E '^.*Central directory entry.*$' | awk '{print $NF}'
+          }
+          calculate_zip_hash() {
+              local zip_file=$1
+              local crc_values=$(extract_crc32 "$zip_file")
+              local filenames=$(extract_filenames "$zip_file")
+              local combined_data=$(paste <(echo "$filenames") <(echo "$crc_values"))
+              echo "$combined_data" | md5sum | awk '{print $1}'
+          }
+
+          version_ids_list=()
+          result_path_list=()
+          echo -n "${{ secrets.OSS_CREDENTIALS }}" > oss_credentials.yaml
+          while [[ $index -lt ${#profile_list[@]} ]]; do
+            profile="${profile_list[$index]}"
+
+            echo "Processing profile: $profile"
+            codeDir="code-$profile"
+
+            mkdir $codeDir && cp -rp code/* $codeDir/
+            cd $codeDir && cp -rp deployments/$profile/* stacks/ 2>/dev/null || echo "No files to copy or directory does not exist"
+            rm -rf deployments/
+            
+            credentials_file="stacks/credentials.yaml"
+            oss_bucket=$(yq '.oss_bucket' "$credentials_file")
+            oss_region=$(yq '.oss_region' "$credentials_file")
+            access_key_id_name=$(yq '.access_key_id' "$credentials_file")
+            access_key_secret_name=$(yq '.access_key_secret' "$credentials_file")
+            access_key_id=$(yq ".${access_key_id_name}" "../oss_credentials.yaml")
+            access_key_secret=$(yq ".${access_key_secret_name}" "../oss_credentials.yaml")
+            export OSS_BUCKET=$oss_bucket OSS_REGION=$oss_region OSS_ACCESS_KEY_ID=$access_key_id OSS_ACCESS_KEY_SECRET=$access_key_secret
+        
+            zip -q -r -X ../$codeDir.zip . -x "*.git*" "*.terraform*" "bootstrap/*" "scripts/*" && cd ..
+
+            if [ ! -f $codeDir.zip ]; then
+              echo "Error: Failed to create $codeDir.zip"
+              exit 1
+            fi
+
+            hash=$(calculate_zip_hash "$codeDir.zip")
+            echo "Hash: $hash"
+
+            object_path="repositories/${{ github.repository }}/${{ inputs.base_ref }}"
+            code_path="${object_path}/code.zip"
+            trigger_file_name="${{ inputs.trigger_file_name }}"
+            trigger_path="${object_path}/${trigger_file_name}"
+
+            ls -all *.zip
+
+            echo "Uploading to OSS with key: $code_path"
+            output=$(python governance/scripts/upload_to_oss.py --key="$code_path" --file_path=$codeDir.zip --unique_key="$hash" 2>&1)
+
+            if [ $? -ne 0 ]; then
+              echo "Error: Failed to upload to OSS"
+              echo "$output"
+              exit 1
+            fi
+
+            echo "INFO: Upload successfully"
+            echo "$output"
+            version_id=$(echo "$output" | grep -o 'Version ID: [^,]*' | sed 's/.*Version ID: //')
+            if [ -z "$version_id" ]; then
+              echo "Warning: Could not extract version_id from output"
+              version_id=""
+            fi
+
+            oss_path="oss::https://${oss_bucket}.oss-${oss_region}.aliyuncs.com"
+            code_path="${oss_path}/${code_path}"
+            result_path="${oss_path}/notifications/${{ github.repository }}/${{ inputs.base_ref }}/${trigger_file_name}"
+            trigger_id="${trigger_file_name%.json}"
+
+            stacks="${stacks_list[$index]}"
+            IFS=',' read -r -a stack_array <<< "$stacks"
+            result_array=()
+            for stack in "${stack_array[@]}"; do
+              if [[ "$stack" != */ ]]; then
+                  stack="${stack}/"
+              fi
+              result_array+=("stacks/${stack}")
+            done
+            stacks_final=$(IFS=','; echo "${result_array[*]}")
+            
+            echo "Creating trigger event file for command: ${{ inputs.command }}"
+            cat > trigger-event.json << EOF
+            {
+              "id": "${trigger_id}",
+              "action": "${{ inputs.command }}",
+              "codeHeadSha": "${{ inputs.head_sha }}",
+              "codeVersionId": "${version_id}",
+              "codePackagePath": "${code_path}",
+              "execResultPath": "${result_path}",
+              "changedFolders": "${stacks_final}"
+            }
           EOF
 
-          echo "Trigger event file content:"
-          cat trigger-event.json
+            echo "Trigger event file content:"
+            cat trigger-event.json
+            python governance/scripts/upload_to_oss.py --key=$trigger_path --file_path=trigger-event.json
 
-          python governance/scripts/upload_to_oss.py --key=$trigger_path --file_path=trigger-event.json
+            result_path_list+=("$profile@$result_path")
+
+            index=$((index+1))
+          done
+
+          result_path_list_final=$(IFS=';'; echo "${result_path_list[*]}")
+          echo "$result_path_list_final"
+          echo "RESULT_PATH=$result_path_list_final" >> $GITHUB_OUTPUT
+          echo "All source package and trigger event file created and uploaded to OSS"
