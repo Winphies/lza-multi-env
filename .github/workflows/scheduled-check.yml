@@ -3,7 +3,15 @@ name: Scheduled Check
 
 on:
   workflow_dispatch:
-  
+    inputs:
+      run_detect:
+        description: 'Whether to run detect check'
+        required: false
+        type: boolean
+        default: false
+  schedule:
+    - cron: '0 0 * * *'  # Run daily at midnight UTC
+
 
 jobs:
   process_code:
@@ -15,3 +23,62 @@ jobs:
       profiles: all
       IAC_GOVERNANCE_REPO: shanye997/lza-multi-env
       IAC_GOVERNANCE_REF: main
+      run_detect: ${{ inputs.run_detect || github.event_name == 'schedule' }}
+
+  get_exec_result:
+    if: inputs.run_detect == true || github.event_name == 'schedule'
+    needs: process_code
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          path: code
+          ref: ${{ github.sha }}
+
+      - name: Checkout scripts
+        uses: actions/checkout@v4
+        with:
+          repository: shanye997/lza-multi-env
+          path: governance
+          token: ${{ secrets.GITHUB_TOKEN }}
+          ref: main
+          sparse-checkout: |
+            scripts/parse_exec_result.py
+
+      - name: Setup Python environment
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.9"
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install alibabacloud-oss-v2
+          pip install PyYAML
+
+      - name: Get execution result
+        id: get_result
+        run: |
+          result_path="${{ needs.process_code.outputs.result_path }}"
+          echo -n "${{ secrets.OSS_CREDENTIALS }}" > oss_credentials.yaml
+
+          ls -all
+         
+          # Run the script to get execution result
+          python governance/scripts/parse_exec_result.py \
+            --code-path="code" \
+            --oss-url="${result_path}" \
+            --output-file=execution_result.txt
+
+          # Read the result file and set output
+          if [ -f execution_result.txt ]; then
+            # Convert file content to base64 to avoid special character issues
+            result_base64=$(base64 -w 0 execution_result.txt)
+            echo "result_content_base64=$result_base64" >> $GITHUB_OUTPUT
+            echo "✅ Execution result retrieved successfully"
+            cat execution_result.txt
+          else
+            echo "❌ Failed to get execution result"
+            exit 1
+          fi

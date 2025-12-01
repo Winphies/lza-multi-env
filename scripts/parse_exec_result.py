@@ -313,7 +313,7 @@ def format_execution_result(data: Dict[str, Any]) -> str:
                 stack_message = stack.get('message', '')
 
                 # Stack status with emoji
-                stack_emoji = "✅" if stack_status == "Deployed" else "❌" if stack_status == "Errored" else "⚪"
+                stack_emoji = "✅" if stack_status == "Deployed" or stack_status == "DetectTriggered" else "❌" if stack_status == "Errored" else "⚪"
 
                 output.append(f"### {i}. Stack: {stack_name}")
                 output.append("")
@@ -348,6 +348,7 @@ def format_execution_result(data: Dict[str, Any]) -> str:
                             "Applied": "✅",
                             "Planned": "✅",
                             "PlannedAndFinished": "✅",
+                            "DetectInProgress": "✅",
                             "Errored": "❌"
                         }.get(deploy_status, "⚪")
 
