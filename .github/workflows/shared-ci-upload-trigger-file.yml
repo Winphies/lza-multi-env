@@ -115,8 +115,8 @@ jobs:
             rm -rf deployments/
             
             credentials_file="stacks/credentials.yaml"
+            oss_region="cn-beijing"
             oss_bucket=$(yq '.oss_bucket' "$credentials_file")
-            oss_region=$(yq '.oss_region' "$credentials_file")
             access_key_id_name=$(yq '.access_key_id' "$credentials_file")
             access_key_secret_name=$(yq '.access_key_secret' "$credentials_file")
             access_key_id=$(yq ".${access_key_id_name}" "../oss_credentials.yaml")
