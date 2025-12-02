@@ -26,7 +26,7 @@ jobs:
       run_detect: ${{ inputs.run_detect || github.event_name == 'schedule' }}
 
   get_exec_result:
-    if: always() && (inputs.run_detect == true || github.event_name == 'schedule')
+    if: ${{ (inputs.run_detect == true || github.event_name == 'schedule') && always() && needs.process_code.result }}
     needs: process_code
     runs-on: ubuntu-latest
     steps:
