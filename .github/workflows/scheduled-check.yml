@@ -26,7 +26,7 @@ jobs:
       run_detect: ${{ inputs.run_detect || github.event_name == 'schedule' }}
 
   get_exec_result:
-    if: inputs.run_detect == true || github.event_name == 'schedule'
+    if: always() && (inputs.run_detect == true || github.event_name == 'schedule')
     needs: process_code
     runs-on: ubuntu-latest
     steps:
@@ -61,6 +61,14 @@ jobs:
         id: get_result
         run: |
           result_path="${{ needs.process_code.outputs.result_path }}"
+          
+          # Check if result_path is empty (process_code may have failed)
+          if [ -z "$result_path" ]; then
+            echo "⚠️  Warning: result_path is empty. process_code job may have failed."
+            echo "Skipping execution result retrieval."
+            exit 0
+          fi
+          
           echo -n "${{ secrets.OSS_CREDENTIALS }}" > oss_credentials.yaml
 
           ls -all
@@ -70,15 +78,3 @@ jobs:
             --code-path="code" \
             --oss-url="${result_path}" \
             --output-file=execution_result.txt
-
-          # Read the result file and set output
-          if [ -f execution_result.txt ]; then
-            # Convert file content to base64 to avoid special character issues
-            result_base64=$(base64 -w 0 execution_result.txt)
-            echo "result_content_base64=$result_base64" >> $GITHUB_OUTPUT
-            echo "✅ Execution result retrieved successfully"
-            cat execution_result.txt
-          else
-            echo "❌ Failed to get execution result"
-            exit 1
-          fi

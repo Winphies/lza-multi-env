@@ -69,6 +69,8 @@ jobs:
           # Extract stack parameter
           if [[ "$comment_body" == *"-stack="* ]]; then
               stack=$(echo "$comment_body" | sed -n 's/.*-stack=\([^ ]*\).*/\1/p')
+              # Remove leading/trailing whitespace, quotes, and other invalid characters
+              stack=$(echo "$stack" | xargs | tr -d '\"'"'"'\r\n')
           else
               stack=""
           fi

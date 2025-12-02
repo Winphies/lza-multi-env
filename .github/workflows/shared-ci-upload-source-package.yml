@@ -107,6 +107,7 @@ jobs:
           }
 
           result_path_list=()
+          failed_profiles=()
           
           echo -n "${{ secrets.OSS_CREDENTIALS }}" > oss_credentials.yaml
           # Check if oss_credentials.yaml exists
@@ -180,11 +181,11 @@ jobs:
             if [ $upload_exit_code -ne 0 ]; then
               echo "Error: Failed to upload to OSS for profile: $profile (exit code: $upload_exit_code)"
               echo "Skipping remaining steps for profile: $profile, continuing with next profile..."
+              failed_profiles+=("$profile")
               continue
             fi
 
             echo "INFO: Upload successfully"
-            echo "$output"
             version_id=$(echo "$output" | grep -o 'Version ID: [^,]*' | sed 's/.*Version ID: //')
             if [ -z "$version_id" ]; then
               echo "Warning: Could not extract version_id from output"
@@ -223,6 +224,7 @@ jobs:
               if [ $trigger_exit_code -ne 0 ]; then
                 echo "Error: Failed to upload trigger file to OSS for profile: $profile"
                 echo "Skipping remaining steps for profile: $profile, continuing with next profile..."
+                failed_profiles+=("$profile")
                 continue
               fi
 
@@ -239,5 +241,15 @@ jobs:
             echo "RESULT_PATH=$result_path_list_final" >> $GITHUB_OUTPUT
           fi
 
-          echo "All source package created and uploaded to OSS"
+           # Check if any profiles failed
+          if [ ${#failed_profiles[@]} -gt 0 ]; then
+            echo ""
+            echo "❌ Error: The following profiles failed to upload:"
+            for failed_profile in "${failed_profiles[@]}"; do
+              echo "  - $failed_profile"
+            done
+            exit 1
+          else
+            echo "All source package created and uploaded to OSS"
+          fi
           

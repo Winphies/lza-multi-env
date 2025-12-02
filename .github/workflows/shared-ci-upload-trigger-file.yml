@@ -103,10 +103,26 @@ jobs:
 
           version_ids_list=()
           result_path_list=()
+          failed_profiles=()
+          
           echo -n "${{ secrets.OSS_CREDENTIALS }}" > oss_credentials.yaml
+          # Check if oss_credentials.yaml exists
+          oss_credentials_file="oss_credentials.yaml"
+          if [ ! -f "$oss_credentials_file" ]; then
+            echo "Error: OSS credentials file not found: $oss_credentials_file"
+            exit 1
+          fi
+
+          # Validate YAML format of oss_credentials.yaml
+          if ! yq eval '.' "$oss_credentials_file" > /dev/null 2>&1; then
+            echo "Error: Invalid YAML format in OSS credentials file: $oss_credentials_file"
+            exit 1
+          fi
+
           while [[ $index -lt ${#profile_list[@]} ]]; do
             profile="${profile_list[$index]}"
 
+            echo ""
             echo "Processing profile: $profile"
             codeDir="code-$profile"
 
@@ -141,11 +157,15 @@ jobs:
             ls -all *.zip
 
             echo "Uploading to OSS with key: $code_path"
-            output=$(python governance/scripts/upload_to_oss.py --key="$code_path" --file_path=$codeDir.zip --unique_key="$hash" 2>&1)
+            # Use tee to display output in real-time while capturing it
+            output_file=$(mktemp)
+            python governance/scripts/upload_to_oss.py --key="$code_path" --file_path=$codeDir.zip --unique_key="$hash" 2>&1 | tee "$output_file"
+            upload_exit_code=${PIPESTATUS[0]}
+            output=$(cat "$output_file")
+            rm -f "$output_file"
 
-            if [ $? -ne 0 ]; then
-              echo "Error: Failed to upload to OSS"
-              echo "$output"
+            if [ $upload_exit_code -ne 0 ]; then
+              echo "Error: Failed to upload to OSS for profile: $profile (exit code: $upload_exit_code)"
               exit 1
             fi
 
