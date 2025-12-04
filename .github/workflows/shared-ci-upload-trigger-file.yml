@@ -172,7 +172,6 @@ jobs:
             fi
 
             echo "INFO: Upload successfully"
-            echo "$output"
             version_id=$(echo "$output" | grep -o 'Version ID: [^,]*' | sed 's/.*Version ID: //')
             if [ -z "$version_id" ]; then
               echo "Warning: Could not extract version_id from output"
