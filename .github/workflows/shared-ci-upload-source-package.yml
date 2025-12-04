@@ -90,22 +90,6 @@ jobs:
           fi
           echo "Profiles to process: ${profile_list[*]}"
 
-          extract_crc32() {
-              local zip_file=$1
-              zipinfo -v "$zip_file" | grep -E '^.*32-bit CRC value.*$' | awk '{print $NF}'
-          }
-          extract_filenames() {
-              local zip_file=$1
-              zipinfo -v "$zip_file" | grep -E '^.*Central directory entry.*$' | awk '{print $NF}'
-          }
-          calculate_zip_hash() {
-              local zip_file=$1
-              local crc_values=$(extract_crc32 "$zip_file")
-              local filenames=$(extract_filenames "$zip_file")
-              local combined_data=$(paste <(echo "$filenames") <(echo "$crc_values"))
-              echo "$combined_data" | md5sum | awk '{print $1}'
-          }
-
           result_path_list=()
           failed_profiles=()
           
@@ -129,21 +113,31 @@ jobs:
             codeDir="code-$profile"
 
             mkdir $codeDir && cp -rp code/* $codeDir/
-            cd $codeDir && cp -rp deployments/$profile/* stacks/ 2>/dev/null || echo "No files to copy or directory does not exist"
-            rm -rf deployments/
-            
-            credentials_file="stacks/credentials.yaml"
+            cd $codeDir
 
-            # Check if credentials file exists
-            if [ ! -f "$credentials_file" ]; then
-              echo "Error: Credentials file not found: $credentials_file"
+            echo "Building package for profile: $profile"
+            make_output_file=$(mktemp)
+            make build-package PROFILE=$profile 2>&1 | tee "$make_output_file"
+            make_exit_code==${PIPESTATUS[0]}
+            make_output=$(cat "$make_output_file")
+            rm -f "$make_output_file"
+            if [ "$make_exit_code" -ne 0 ]; then
+              echo "Error: Failed to build package for profile: $profile"
+              exit 1
+            fi
+            hash=$(echo "$make_output" | grep -o "Hash: [a-f0-9]*" | awk '{print $2}')
+            
+            profile_file="stacks/profile.yaml"
+            # Check if profile file exists
+            if [ ! -f "$profile_file" ]; then
+              echo "Error: Profile file not found: $profile_file"
               exit 1
             fi
 
             oss_region="cn-beijing"
-            oss_bucket=$(yq '.oss_bucket' "$credentials_file")
-            access_key_id_name=$(yq '.access_key_id' "$credentials_file")
-            access_key_secret_name=$(yq '.access_key_secret' "$credentials_file")
+            oss_bucket=$(yq '.oss_bucket' "$profile_file")
+            access_key_id_name=$(yq '.access_key_id' "$profile_file")
+            access_key_secret_name=$(yq '.access_key_secret' "$profile_file")
 
             access_key_id=$(yq ".${access_key_id_name}" "../oss_credentials.yaml")
             access_key_secret=$(yq ".${access_key_secret_name}" "../oss_credentials.yaml")
@@ -152,23 +146,16 @@ jobs:
               echo "Error: Missing access key ID or access key secret"
               exit 1
             fi
-            
+
             export OSS_BUCKET=$oss_bucket OSS_REGION=$oss_region OSS_ACCESS_KEY_ID=$access_key_id OSS_ACCESS_KEY_SECRET=$access_key_secret
         
-            zip -q -r -X ../$codeDir.zip . -x "*.git*" "*.terraform*" "bootstrap/*" "scripts/*" && cd ..
-
-            if [ ! -f $codeDir.zip ]; then
-              echo "Error: Failed to create $codeDir.zip"
-              exit 1
-            fi
-
-            hash=$(calculate_zip_hash "$codeDir.zip")
-            echo "Hash: $hash"
-
+            mv $codeDir.zip ../
+            cd ../
+            ls -all *.zip
+            
             object_path="repositories/${{ github.repository }}/${{ inputs.base_ref }}"
             code_path="${object_path}/code.zip"
 
-            ls -all $codeDir.zip
 
             echo "Uploading to OSS with key: $code_path"
             # Use tee to display output in real-time while capturing it

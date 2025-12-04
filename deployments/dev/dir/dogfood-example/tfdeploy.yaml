@@ -4,7 +4,7 @@ deployment:
   - name: production
     inputs:
       region: "cn-beijing"
-      vpc_name: "vpc-prod-update"
+      vpc_name: "vpc-prod-update-{{PROFILE.account_id}}"
       vpc_cidr: "192.168.0.0/16"
       zone_ids: ["cn-beijing-l", "cn-beijing-k"]
       vswitch_cidrs: ["192.168.1.0/24", "192.168.2.0/24"]

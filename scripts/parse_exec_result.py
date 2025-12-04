@@ -140,8 +140,8 @@ def parse_multi_oss_urls(oss_urls: str) -> List[Tuple[str, str, str, str]]:
 def load_credentials(profile_name: str, code_path: str = "") -> Optional[Tuple[str, str]]:
     """Load credentials for a specific profile.
     
-    First looks for profile credentials in deployments/{profile_name}/credentials.yaml
-    to get the access key names, then looks in the root credentials.yaml to get the actual values.
+    First looks for profile credentials in deployments/{profile_name}/profile.yaml
+    to get the access key names, then looks in the root profile.yaml to get the actual values.
     
     Args:
         profile_name: The name of the profile to load credentials for
@@ -160,7 +160,7 @@ def load_credentials(profile_name: str, code_path: str = "") -> Optional[Tuple[s
         print(f"Base path: {base_path}")
 
         # Path to profile credentials file
-        profile_credentials_path = f"{base_path}/deployments/{profile_name}/credentials.yaml"
+        profile_credentials_path = f"{base_path}/deployments/{profile_name}/profile.yaml"
 
         # Check if profile credentials file exists
         if not os.path.exists(profile_credentials_path):
