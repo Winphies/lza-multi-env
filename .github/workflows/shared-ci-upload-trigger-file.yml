@@ -65,6 +65,13 @@ jobs:
 
       - name: Upload source package and trigger event file
         id: upload_trigger_event_file
+        env: 
+          DEV_ACCESS_KEY_ID: ${{ secrets.DEV_ACCESS_KEY_ID }}
+          DEV_ACCESS_KEY_SECRET: ${{ secrets.DEV_ACCESS_KEY_SECRET }}
+          PROD_ACCESS_KEY_ID: ${{ secrets.PROD_ACCESS_KEY_ID }}
+          PROD_ACCESS_KEY_SECRET: ${{ secrets.PROD_ACCESS_KEY_SECRET }}
+          STAGING_ACCESS_KEY_ID: ${{ secrets.STAGING_ACCESS_KEY_ID }}
+          STAGING_ACCESS_KEY_SECRET: ${{ secrets.STAGING_ACCESS_KEY_SECRET }}
         run: |
           echo "Creating source package..."
 
@@ -88,20 +95,6 @@ jobs:
           version_ids_list=()
           result_path_list=()
           failed_profiles=()
-          
-          echo -n "${{ secrets.OSS_CREDENTIALS }}" > oss_credentials.yaml
-          # Check if oss_credentials.yaml exists
-          oss_credentials_file="oss_credentials.yaml"
-          if [ ! -f "$oss_credentials_file" ]; then
-            echo "Error: OSS credentials file not found: $oss_credentials_file"
-            exit 1
-          fi
-
-          # Validate YAML format of oss_credentials.yaml
-          if ! yq eval '.' "$oss_credentials_file" > /dev/null 2>&1; then
-            echo "Error: Invalid YAML format in OSS credentials file: $oss_credentials_file"
-            exit 1
-          fi
 
           while [[ $index -lt ${#profile_list[@]} ]]; do
             profile="${profile_list[$index]}"
@@ -124,7 +117,7 @@ jobs:
               exit 1
             fi
             hash=$(echo "$make_output" | grep -o "Hash: [a-f0-9]*" | awk '{print $2}')
-            
+
             profile_file="stacks/profile.yaml"
             # Check if profile file exists
             if [ ! -f "$profile_file" ]; then
@@ -137,16 +130,17 @@ jobs:
             access_key_id_name=$(yq '.access_key_id' "$profile_file")
             access_key_secret_name=$(yq '.access_key_secret' "$profile_file")
 
-            access_key_id=$(yq ".${access_key_id_name}" "../oss_credentials.yaml")
-            access_key_secret=$(yq ".${access_key_secret_name}" "../oss_credentials.yaml")
+            # 从环境变量中获取，变量名与 access_key_id_name 和 access_key_secret_name 相同
+            access_key_id="${!access_key_id_name}"
+            access_key_secret="${!access_key_secret_name}"
             
             if [ -z "$access_key_id" ] || [ -z "$access_key_secret" ]; then
               echo "Error: Missing access key ID or access key secret"
               exit 1
             fi
-
             export OSS_BUCKET=$oss_bucket OSS_REGION=$oss_region OSS_ACCESS_KEY_ID=$access_key_id OSS_ACCESS_KEY_SECRET=$access_key_secret
 
+           
             mv $codeDir.zip ../
             cd ../
             ls -all *.zip

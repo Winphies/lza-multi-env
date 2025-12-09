@@ -23,7 +23,11 @@ on:
         required: false
         type: boolean
         default: false
-
+      secrets_map:
+        required: false
+        type: string
+        description: "YAML string representing a map of secrets to be used in the workflow"
+      
     outputs:
       result_path:
         description: "The log path of the execution result"
@@ -60,16 +64,35 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install alibabacloud-oss-v2
+      
+      - name: Process secrets map
+        if: ${{ inputs.secrets_map != '' }}
+        run: |
+          echo "Processing secrets map..."
+          # 将 secrets_map 保存到环境变量中
+          echo "SECRETS_MAP=${{ inputs.secrets_map }}" >> $GITHUB_ENV
+          
+          # 遍历 JSON 数据并设置各个 secrets 为环境变量
+          echo "${{ inputs.secrets_map }}" | jq -r 'to_entries[] | "\(.key)=\(.value)"' | while IFS= read -r line; do
+            echo "$line" >> $GITHUB_ENV
+          done
 
       - name: Create source package and Upload to OSS
         id: upload_and_trigger
+        env: 
+          DEV_ACCESS_KEY_ID: ${{ secrets.DEV_ACCESS_KEY_ID }}
+          DEV_ACCESS_KEY_SECRET: ${{ secrets.DEV_ACCESS_KEY_SECRET }}
+          PROD_ACCESS_KEY_ID: ${{ secrets.PROD_ACCESS_KEY_ID }}
+          PROD_ACCESS_KEY_SECRET: ${{ secrets.PROD_ACCESS_KEY_SECRET }}
+          STAGING_ACCESS_KEY_ID: ${{ secrets.STAGING_ACCESS_KEY_ID }}
+          STAGING_ACCESS_KEY_SECRET: ${{ secrets.STAGING_ACCESS_KEY_SECRET }}
         run: |
           echo "Creating source package..."
-
+          
           wget -q https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -O /usr/local/bin/yq 
           chmod +x /usr/local/bin/yq
           yq --version
-
+          
           profiles=${{ inputs.profiles }}
           echo "Profiles: ${profiles}"
           if [[ "$profiles" == "all" ]]; then
@@ -89,49 +112,40 @@ jobs:
               IFS=',' read -ra profile_list <<< "$profiles"
           fi
           echo "Profiles to process: ${profile_list[*]}"
-
+          
           result_path_list=()
           failed_profiles=()
-          
-          echo -n "${{ secrets.OSS_CREDENTIALS }}" > oss_credentials.yaml
-          # Check if oss_credentials.yaml exists
-          oss_credentials_file="oss_credentials.yaml"
-          if [ ! -f "$oss_credentials_file" ]; then
-            echo "Error: OSS credentials file not found: $oss_credentials_file"
-            exit 1
-          fi
 
-          # Validate YAML format of oss_credentials.yaml
-          if ! yq eval '.' "$oss_credentials_file" > /dev/null 2>&1; then
-            echo "Error: Invalid YAML format in OSS credentials file: $oss_credentials_file"
-            exit 1
-          fi
-
+          rootDir=$(pwd)
           for profile in "${profile_list[@]}"; do
             echo ""
             echo "Processing profile: $profile"
             codeDir="code-$profile"
 
+            cd $rootDir
             mkdir $codeDir && cp -rp code/* $codeDir/
             cd $codeDir
 
             echo "Building package for profile: $profile"
             make_output_file=$(mktemp)
             make build-package PROFILE=$profile 2>&1 | tee "$make_output_file"
-            make_exit_code==${PIPESTATUS[0]}
+            make_exit_code=${PIPESTATUS[0]}
             make_output=$(cat "$make_output_file")
             rm -f "$make_output_file"
             if [ "$make_exit_code" -ne 0 ]; then
               echo "Error: Failed to build package for profile: $profile"
-              exit 1
+              failed_profiles+=("$profile")
+              continue
             fi
             hash=$(echo "$make_output" | grep -o "Hash: [a-f0-9]*" | awk '{print $2}')
-            
+          
+
             profile_file="stacks/profile.yaml"
             # Check if profile file exists
             if [ ! -f "$profile_file" ]; then
               echo "Error: Profile file not found: $profile_file"
-              exit 1
+              failed_profiles+=("$profile")
+              continue
             fi
 
             oss_region="cn-beijing"
@@ -139,16 +153,18 @@ jobs:
             access_key_id_name=$(yq '.access_key_id' "$profile_file")
             access_key_secret_name=$(yq '.access_key_secret' "$profile_file")
 
-            access_key_id=$(yq ".${access_key_id_name}" "../oss_credentials.yaml")
-            access_key_secret=$(yq ".${access_key_secret_name}" "../oss_credentials.yaml")
+            # 从环境变量中获取，变量名与 access_key_id_name 和 access_key_secret_name 相同
+            access_key_id="${!access_key_id_name}"
+            access_key_secret="${!access_key_secret_name}"
 
             if [ -z "$access_key_id" ] || [ -z "$access_key_secret" ]; then
               echo "Error: Missing access key ID or access key secret"
-              exit 1
+              failed_profiles+=("$profile")
+              continue
             fi
-
             export OSS_BUCKET=$oss_bucket OSS_REGION=$oss_region OSS_ACCESS_KEY_ID=$access_key_id OSS_ACCESS_KEY_SECRET=$access_key_secret
         
+           
             mv $codeDir.zip ../
             cd ../
             ls -all *.zip

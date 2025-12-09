@@ -12,10 +12,9 @@ on:
   schedule:
     - cron: '0 0 * * *'  # Run daily at midnight UTC
 
-
 jobs:
   process_code:
-    uses: shanye997/lza-multi-env/.github/workflows/shared-ci-upload-source-package.yml@${{ vars.MAIN_REF }}
+    uses: shanye997/lza-multi-env/.github/workflows/shared-ci-upload-source-package.yml@main
     secrets: inherit
     with:
       base_ref: main
@@ -59,6 +58,13 @@ jobs:
 
       - name: Get execution result
         id: get_result
+        env: 
+          DEV_ACCESS_KEY_ID: ${{ secrets.DEV_ACCESS_KEY_ID }}
+          DEV_ACCESS_KEY_SECRET: ${{ secrets.DEV_ACCESS_KEY_SECRET }}
+          PROD_ACCESS_KEY_ID: ${{ secrets.PROD_ACCESS_KEY_ID }}
+          PROD_ACCESS_KEY_SECRET: ${{ secrets.PROD_ACCESS_KEY_SECRET }}
+          STAGING_ACCESS_KEY_ID: ${{ secrets.STAGING_ACCESS_KEY_ID }}
+          STAGING_ACCESS_KEY_SECRET: ${{ secrets.STAGING_ACCESS_KEY_SECRET }}
         run: |
           result_path="${{ needs.process_code.outputs.result_path }}"
           

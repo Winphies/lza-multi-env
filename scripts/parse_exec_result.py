@@ -189,26 +189,9 @@ def load_credentials(profile_name: str, code_path: str = "") -> Optional[Tuple[s
                 f"⚠️  Warning: Access key names not found in profile credentials for {profile_name}")
             return None
 
-        # Load root credentials file to get actual values
-        root_credentials_path = "oss_credentials.yaml"
-        if not os.path.exists(root_credentials_path):
-            print(
-                f"⚠️  Warning: Root credentials file not found: {root_credentials_path}")
-            return None
-
-        # Load root credentials file using YAML parser
-        with open(root_credentials_path, 'r') as f:
-            root_credentials = yaml.safe_load(f)
-
-        # Check if root_credentials is a dictionary
-        if not isinstance(root_credentials, dict):
-            print(
-                f"❌ Error: Root credentials is not a dictionary: {root_credentials}")
-            return None
-
         # Get actual access key values
-        access_key_id = root_credentials.get(access_key_id_name)
-        access_key_secret = root_credentials.get(access_key_secret_name)
+        access_key_id = os.getenv(access_key_id_name)
+        access_key_secret = os.getenv(access_key_secret_name)
 
         if not access_key_id or not access_key_secret:
             print(

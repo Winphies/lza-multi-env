@@ -10,6 +10,14 @@ permissions:
   pull-requests: write
   issues: write
 
+env:
+    DEV_ACCESS_KEY_ID: ${{ secrets.DEV_ACCESS_KEY_ID }}
+    DEV_ACCESS_KEY_SECRET: ${{ secrets.DEV_ACCESS_KEY_SECRET }}
+    PROD_ACCESS_KEY_ID: ${{ secrets.PROD_ACCESS_KEY_ID }}
+    PROD_ACCESS_KEY_SECRET: ${{ secrets.PROD_ACCESS_KEY_SECRET }}
+    STAGING_ACCESS_KEY_ID: ${{ secrets.STAGING_ACCESS_KEY_ID }}
+    STAGING_ACCESS_KEY_SECRET: ${{ secrets.STAGING_ACCESS_KEY_SECRET }}
+
 jobs:
   get_trigger_info:
     if: github.event.issue.pull_request
