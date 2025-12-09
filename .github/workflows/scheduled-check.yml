@@ -15,7 +15,7 @@ on:
 
 jobs:
   process_code:
-    uses: shanye997/lza-multi-env/.github/workflows/shared-ci-upload-source-package.yml@main
+    uses: shanye997/lza-multi-env/.github/workflows/shared-ci-upload-source-package.yml@${{ vars.MAIN_REF }}
     secrets: inherit
     with:
       base_ref: main
