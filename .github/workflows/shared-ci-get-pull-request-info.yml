@@ -134,7 +134,7 @@ jobs:
 
       - name: Get changed files
         id: changed-files
-        uses: tj-actions/changed-files@v46
+        uses: ./.github/actions/changed-files
         with:
           sha: ${{ needs.get_pr_info.outputs.head_sha }}
           base_sha: ${{ needs.get_pr_info.outputs.base_sha }}
