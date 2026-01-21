@@ -9,8 +9,8 @@ on:
         required: false
         type: boolean
         default: false
-  schedule:
-    - cron: '0 0 * * *'  # Run daily at midnight UTC
+  # schedule:
+  #   - cron: '0 0 * * *'  # Run daily at midnight UTC
 
 jobs:
   process_code:
