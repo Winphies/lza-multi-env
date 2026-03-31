@@ -21,7 +21,7 @@ env:
 jobs:
   get_trigger_info:
     if: github.event.issue.pull_request
-    uses: shanye997/lza-multi-env/.github/workflows/shared-ci-get-pull-request-info.yml@main
+    uses: ./.github/workflows/shared-ci-get-pull-request-info.yml
     secrets: inherit
     with:
       pr_number: ${{ github.event.issue.number }}
@@ -29,7 +29,7 @@ jobs:
 
   process_trigger_file:
     needs: get_trigger_info
-    uses: shanye997/lza-multi-env/.github/workflows/shared-ci-upload-trigger-file.yml@main
+    uses: ./.github/workflows/shared-ci-upload-trigger-file.yml
     secrets: inherit
     with:
       command: ${{ needs.get_trigger_info.outputs.command }}
@@ -37,8 +37,6 @@ jobs:
       head_sha: ${{ needs.get_trigger_info.outputs.head_sha }}
       all_changed_stacks: ${{ needs.get_trigger_info.outputs.all_changed_stacks }}
       trigger_file_name: "PR${{ github.event.issue.number }}-[${{ github.actor }}]-${{ github.run_number }}.json"
-      IAC_GOVERNANCE_REPO: shanye997/lza-multi-env
-      IAC_GOVERNANCE_REF: main
 
   get_exec_result:
     needs: process_trigger_file
@@ -53,7 +51,6 @@ jobs:
       - name: Checkout scripts
         uses: actions/checkout@v4
         with:
-          repository: shanye997/lza-multi-env
           path: governance
           token: ${{ secrets.GITHUB_TOKEN }}
           ref: main

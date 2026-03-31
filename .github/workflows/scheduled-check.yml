@@ -14,14 +14,12 @@ on:
 
 jobs:
   process_code:
-    uses: shanye997/lza-multi-env/.github/workflows/shared-ci-upload-source-package.yml@main
+    uses: ./.github/workflows/shared-ci-upload-source-package.yml
     secrets: inherit
     with:
       base_ref: main
       head_sha: ${{ github.sha }}
       profiles: all
-      IAC_GOVERNANCE_REPO: shanye997/lza-multi-env
-      IAC_GOVERNANCE_REF: main
       run_detect: ${{ inputs.run_detect || github.event_name == 'schedule' }}
 
   get_exec_result:
@@ -38,9 +36,7 @@ jobs:
       - name: Checkout scripts
         uses: actions/checkout@v4
         with:
-          repository: shanye997/lza-multi-env
           path: governance
-          token: ${{ secrets.GITHUB_TOKEN }}
           ref: main
           sparse-checkout: |
             scripts/parse_exec_result.py
