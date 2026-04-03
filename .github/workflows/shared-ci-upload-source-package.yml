@@ -84,17 +84,18 @@ jobs:
           echo "Creating source package..."
           
           # Make yq script executable
-          # chmod +x governance/scripts/yaml_parser.py
-          # chmod +x governance/scripts/yq
+          chmod +x governance/scripts/yaml_parser.py
+          chmod +x governance/scripts/yq
 
           # Create symlink to simulate yq command
-          # mkdir -p ~/bin
-          # ln -sf $(pwd)/governance/scripts/yq ~/bin/yq
-          # export PATH="$HOME/bin:$PATH"
+          mkdir -p ~/bin
+          cp governance/scripts/yq ~/bin/yq
+          cp governance/scripts/yaml_parser.py ~/bin/yaml_parser.py
+          export PATH="$HOME/bin:$PATH"
 
-          wget -q https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -O /usr/local/bin/yq 
-          chmod +x /usr/local/bin/yq
-          yq --version
+          # wget -q https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -O /usr/local/bin/yq 
+          # chmod +x /usr/local/bin/yq
+          # yq --version
           
           profiles=${{ inputs.profiles }}
           echo "Profiles: ${profiles}"

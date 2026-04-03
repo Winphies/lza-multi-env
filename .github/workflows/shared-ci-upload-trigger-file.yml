@@ -67,9 +67,18 @@ jobs:
         run: |
           echo "Creating source package..."
 
-          wget -q https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -O /usr/local/bin/yq 
-          chmod +x /usr/local/bin/yq
-          yq --version
+          # Make yq script executable
+          chmod +x governance/scripts/yaml_parser.py
+          chmod +x governance/scripts/yq
+
+          # Create symlink to simulate yq command
+          mkdir -p ~/bin
+          ln -sf $(pwd)/governance/scripts/yq ~/bin/yq
+          export PATH="$HOME/bin:$PATH"
+
+          # wget -q https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -O /usr/local/bin/yq 
+          # chmod +x /usr/local/bin/yq
+          # yq --version
 
           input_profiles="${{ inputs.all_changed_stacks }}"
           echo "Profiles: ${input_profiles}"
