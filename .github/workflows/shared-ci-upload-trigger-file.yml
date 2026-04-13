@@ -48,7 +48,7 @@ jobs:
       - name: Setup Python environment
         uses: actions/setup-python@v4
         with:
-          python-version: "3.9"
+          python-version: "3.12"
 
       - name: Install Python dependencies
         run: |
@@ -73,12 +73,9 @@ jobs:
 
           # Create symlink to simulate yq command
           mkdir -p ~/bin
-          ln -sf $(pwd)/governance/scripts/yq ~/bin/yq
+          cp governance/scripts/yq ~/bin/yq
+          cp governance/scripts/yaml_parser.py ~/bin/yaml_parser.py
           export PATH="$HOME/bin:$PATH"
-
-          # wget -q https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -O /usr/local/bin/yq 
-          # chmod +x /usr/local/bin/yq
-          # yq --version
 
           input_profiles="${{ inputs.all_changed_stacks }}"
           echo "Profiles: ${input_profiles}"
