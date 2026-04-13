@@ -3,7 +3,9 @@
 # yq 命令的包装脚本，使用 Python 脚本实现相同功能
 
 # 获取脚本所在目录
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+#SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+
 PYTHON_SCRIPT="$SCRIPT_DIR/yaml_parser.py"
 
 # 确保 Python 脚本存在且可执行
